@@ -47,6 +47,7 @@ class Profile:
     edge_node_inconsistent: bool
     allow_get: bool = False
     cors_reflects_origin: bool = False
+    introspection_authed_only: bool = False  # introspection blocked for anon, ok if authed
 
 
 VULNERABLE = Profile(
@@ -351,9 +352,12 @@ def _execute_one(
             return {"errors": [{"message": msg}]}
         return {"errors": [{"message": "Syntax error"}]}
 
-    # Introspection block (hardened): refuse __schema/__type.
-    if not profile.introspection and ("__schema" in query or "__type" in query):
-        return _error_body("GraphQL introspection is not allowed")
+    # Introspection block: refuse __schema/__type unless introspection is open,
+    # or it is authed-only and this request carries an identity.
+    if "__schema" in query or "__type" in query:
+        allowed = profile.introspection or (profile.introspection_authed_only and bool(identity))
+        if not allowed:
+            return _error_body("GraphQL introspection is not allowed")
 
     if profile.enforce_depth is not None:
         for defn in doc.definitions:

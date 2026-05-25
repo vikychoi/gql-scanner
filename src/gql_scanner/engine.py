@@ -107,7 +107,9 @@ def run_scan(
     reporter.banner(settings.url)
 
     reporter.phase("resolving schema")
-    resolution = resolve_schema(transport, settings.url, settings.schema_path)
+    resolution = resolve_schema(
+        transport, settings.url, settings.schema_path, settings.roles
+    )
     reporter.info(resolution.note)
 
     intro_ex = resolution.introspection_exchange

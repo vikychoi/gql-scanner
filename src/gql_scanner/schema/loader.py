@@ -1,8 +1,11 @@
 """Resolve a :class:`SchemaModel`: introspection over the wire, or a file.
 
-Resolution order (§5.2): if ``--schema`` is supplied it is preferred and the
-override is noted. Otherwise we attempt the live introspection query. If neither
-yields a schema, callers fall back to schema-independent checks.
+Resolution order (§5.2): introspection is attempted **unauthenticated first**
+(so anonymous exposure is recorded), then with each supplied role's credentials
+in deterministic order (introspection is often allowed for authenticated users
+while blocked for anonymous). A ``--schema`` file, if supplied, overrides the
+result. If nothing yields a live schema, the attack surface is reconstructed
+from validation-error oracles; failing that, only schema-independent checks run.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from pathlib import Path
 
 from graphql import GraphQLSchema, build_schema
 
-from ..config import ConfigError
+from ..config import UNAUTH_ROLE, ConfigError, Role
 from ..exchange import Exchange
 from ..transport import Transport
 from .introspection import INTROSPECTION_QUERY, parse_introspection
@@ -45,34 +48,67 @@ class SchemaResolution:
 
     model: SchemaModel | None
     introspection_exchange: Exchange | None
-    introspection_enabled: bool
+    introspection_enabled: bool  # True only if introspection works *unauthenticated*
     note: str
     reconstruction: ReconstructResult | None = None
+    introspection_role: str | None = None  # role whose creds unlocked introspection
 
 
-def resolve_schema(transport: Transport, url: str, schema_path: Path | None) -> SchemaResolution:
-    """Resolve the schema, recording whether introspection was enabled."""
-    introspection_exchange: Exchange | None = None
-    introspection_enabled = False
-
-    # Always probe introspection so the introspection check + matrix have signal.
-    exchange = transport.graphql(url, INTROSPECTION_QUERY)
-    introspection_exchange = exchange
-    live_schema: GraphQLSchema | None = None
+def _try_introspection(
+    transport: Transport, url: str, role: Role | None
+) -> tuple[Exchange, GraphQLSchema | None]:
+    """Send the introspection query (optionally as a role); return (exchange, schema)."""
+    headers = role.headers or None if role else None
+    cookies = role.cookies or None if role else None
+    exchange = transport.graphql(url, INTROSPECTION_QUERY, headers=headers, cookies=cookies)
+    schema: GraphQLSchema | None = None
     if exchange.ok and exchange.status == 200:
         data = exchange.graphql_data()
         if isinstance(data, dict) and "__schema" in data:
             try:
-                live_schema = parse_introspection(data)
-                introspection_enabled = True
+                schema = parse_introspection(data)
             except (ValueError, TypeError, KeyError):
-                live_schema = None
+                schema = None
+    return exchange, schema
+
+
+def resolve_schema(
+    transport: Transport,
+    url: str,
+    schema_path: Path | None,
+    roles: list[Role] | None = None,
+) -> SchemaResolution:
+    """Resolve the schema, trying introspection unauthenticated then per-role.
+
+    Unauthenticated introspection is attempted first so ``introspection_enabled``
+    reflects anonymous exposure (the security-relevant signal). If that yields no
+    schema, each supplied role's credentials are tried in deterministic order —
+    introspection is commonly allowed for authenticated users while blocked for
+    anonymous, and the scan should use whatever access it was given.
+    """
+    # 1. Unauthenticated probe — also feeds the introspection-enabled signal/matrix.
+    introspection_exchange, live_schema = _try_introspection(transport, url, None)
+    introspection_enabled = live_schema is not None
+    introspection_role: str | None = "unauthenticated" if introspection_enabled else None
+
+    # 2. If anon introspection is blocked, try each authenticated role's creds.
+    if live_schema is None and roles:
+        authed = sorted(
+            (r for r in roles if r.name != UNAUTH_ROLE and not r.is_unauth),
+            key=lambda r: r.name,
+        )
+        for role in authed:
+            _, schema = _try_introspection(transport, url, role)
+            if schema is not None:
+                live_schema = schema
+                introspection_role = role.name
+                break
 
     if schema_path is not None:
         file_schema = load_schema_file(schema_path)
         note = (
             "schema file supplied; introspection also enabled — using file (override)"
-            if introspection_enabled
+            if live_schema is not None
             else "schema loaded from --schema file"
         )
         return SchemaResolution(
@@ -80,14 +116,23 @@ def resolve_schema(transport: Transport, url: str, schema_path: Path | None) -> 
             introspection_exchange=introspection_exchange,
             introspection_enabled=introspection_enabled,
             note=note,
+            introspection_role=introspection_role,
         )
 
     if live_schema is not None:
+        via = introspection_role or "unauthenticated"
+        note = (
+            "schema loaded from live introspection"
+            if via == "unauthenticated"
+            else f"schema loaded from live introspection as role '{via}' "
+            "(introspection blocked for unauthenticated)"
+        )
         return SchemaResolution(
             model=SchemaModel.from_schema(live_schema, source="introspection"),
             introspection_exchange=introspection_exchange,
-            introspection_enabled=True,
-            note="schema loaded from live introspection",
+            introspection_enabled=introspection_enabled,
+            note=note,
+            introspection_role=introspection_role,
         )
 
     # Last resort: introspection off and no --schema. Try to recover the attack
