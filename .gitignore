@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Scan outputs & tool caches
+gql-scanner-findings.csv
+gql-scanner-access-matrix.csv
+*.jsonl
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+CLAUDE.md

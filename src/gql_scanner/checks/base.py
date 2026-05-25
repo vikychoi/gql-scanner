@@ -1,0 +1,66 @@
+"""Check abstract base class and the per-run context handed to every check."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+
+from ..accessmatrix import AccessMatrix
+from ..config import Role, Settings
+from ..findings import Finding
+from ..reporter import Reporter
+from ..schema.model import SchemaModel
+from ..schema.reconstruct import ReconstructResult
+from ..transport import Transport
+
+
+@dataclass(frozen=True)
+class CheckContext:
+    """Everything a check needs. Checks are pure over this; only ``transport`` does I/O."""
+
+    settings: Settings
+    transport: Transport
+    schema: SchemaModel | None
+    matrix: AccessMatrix
+    introspection_enabled: bool
+    reconstruction: ReconstructResult | None = None
+    reporter: Reporter | None = None
+    # Shared, mutable scratch space so checks that derive from the same expensive
+    # probing (e.g. the injection families) compute it once. Frozen dataclass keeps
+    # the binding fixed; the dict contents are intentionally mutable.
+    cache: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def url(self) -> str:
+        return self.settings.url
+
+    @property
+    def roles(self) -> list[Role]:
+        return self.settings.roles
+
+    def primary_role(self) -> Role:
+        """The role to use for behavior probes that test a control, not authz.
+
+        Injection/DoS probes want to reach resolvers, so they use the first
+        authenticated role (alphabetical) if one exists, else unauthenticated.
+        """
+        authed = [r for r in self.settings.roles if not r.is_unauth]
+        return authed[0] if authed else self.settings.roles[0]
+
+    def primary_creds(self) -> tuple[dict[str, str] | None, dict[str, str] | None]:
+        role = self.primary_role()
+        return (role.headers or None, role.cookies or None)
+
+
+class Check(ABC):
+    """A single, idempotent, read-only-by-default control from the OWASP sheet."""
+
+    id: str
+    title: str
+    requires_schema: bool = False
+    is_mutation_probe: bool = False  # gated by --allow-mutations when True
+
+    @abstractmethod
+    def run(self, ctx: CheckContext) -> list[Finding]:
+        """Run the check and return zero or more findings."""
+        raise NotImplementedError

@@ -1,0 +1,16 @@
+{
+  "admin": {
+    "headers": { "Authorization": "Bearer REPLACE_WITH_ADMIN_TOKEN" },
+    "privilege": 10
+  },
+  "alice": {
+    "headers": { "Authorization": "Bearer REPLACE_WITH_ALICE_TOKEN" },
+    "owns": { "paste": ["1", "2"] },
+    "privilege": 1
+  },
+  "bob": {
+    "cookies": { "session": "REPLACE_WITH_BOB_SESSION" },
+    "owns": { "paste": ["3"] },
+    "privilege": 1
+  }
+}
