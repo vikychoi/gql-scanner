@@ -11,11 +11,41 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 UNAUTH_ROLE = "unauthenticated"
-_ALLOWED_ROLE_KEYS = {"headers", "cookies", "owns", "privilege"}
+_ALLOWED_ROLE_KEYS = {"headers", "cookies", "owns", "privilege", "refresh"}
+_ALLOWED_REFRESH_KEYS = {
+    "script",
+    "command",
+    "entrypoint",
+    "dependencies",
+    "runner",
+    "inject",
+    "timeout",
+}
 
 
 class ConfigError(Exception):
     """Raised on invalid user-supplied configuration (maps to exit code 2)."""
+
+
+@dataclass(frozen=True)
+class RefreshSpec:
+    """How to obtain a fresh credential for a role when its token expires.
+
+    Exactly one source is set: a subprocess ``script`` (run via ``uv run`` so its
+    ``dependencies`` are guaranteed in an isolated env), a full shell ``command``,
+    or an in-process ``entrypoint`` (``"module:function"``). The source prints / returns
+    either a bare token (applied via ``inject_header``/``inject_template``) or a JSON
+    object ``{"headers": {...}, "cookies": {...}}`` merged into the role's creds.
+    """
+
+    script: str | None = None
+    command: str | None = None
+    entrypoint: str | None = None
+    dependencies: tuple[str, ...] = ()
+    runner: str | None = None  # override; e.g. "uv run" or a python path
+    inject_header: str = "Authorization"
+    inject_template: str = "Bearer {token}"
+    timeout: float = 30.0
 
 
 @dataclass(frozen=True)
@@ -33,6 +63,7 @@ class Role:
     cookies: dict[str, str] = field(default_factory=dict)
     owns: dict[str, tuple[str, ...]] = field(default_factory=dict)
     privilege: int = 0
+    refresh: RefreshSpec | None = None
 
     @property
     def is_unauth(self) -> bool:
@@ -67,6 +98,45 @@ def _validate_owns(value: object, *, name: str) -> dict[str, tuple[str, ...]]:
             coerced.append(str(i))
         out[field_name] = tuple(coerced)
     return out
+
+
+def _validate_refresh(value: object, *, name: str) -> RefreshSpec:
+    if not isinstance(value, dict):
+        raise ConfigError(f"role {name!r} 'refresh' must be an object")
+    unknown = set(value) - _ALLOWED_REFRESH_KEYS
+    if unknown:
+        raise ConfigError(f"role {name!r} 'refresh' has unknown keys: {sorted(unknown)}")
+    sources = [k for k in ("script", "command", "entrypoint") if value.get(k)]
+    if len(sources) != 1:
+        raise ConfigError(
+            f"role {name!r} 'refresh' must set exactly one of script/command/entrypoint"
+        )
+    for key in ("script", "command", "entrypoint", "runner"):
+        if key in value and not isinstance(value[key], str):
+            raise ConfigError(f"role {name!r} 'refresh.{key}' must be a string")
+    deps_raw = value.get("dependencies", [])
+    if not isinstance(deps_raw, list) or not all(isinstance(d, str) for d in deps_raw):
+        raise ConfigError(f"role {name!r} 'refresh.dependencies' must be a list of strings")
+    inject = value.get("inject", {})
+    if not isinstance(inject, dict):
+        raise ConfigError(f"role {name!r} 'refresh.inject' must be an object")
+    header = inject.get("header", "Authorization")
+    template = inject.get("template", "Bearer {token}")
+    if not isinstance(header, str) or not isinstance(template, str):
+        raise ConfigError(f"role {name!r} 'refresh.inject' header/template must be strings")
+    timeout = value.get("timeout", 30.0)
+    if not isinstance(timeout, (int, float)) or isinstance(timeout, bool):
+        raise ConfigError(f"role {name!r} 'refresh.timeout' must be a number")
+    return RefreshSpec(
+        script=value.get("script"),
+        command=value.get("command"),
+        entrypoint=value.get("entrypoint"),
+        dependencies=tuple(deps_raw),
+        runner=value.get("runner"),
+        inject_header=header,
+        inject_template=template,
+        timeout=float(timeout),
+    )
 
 
 def _csv_safe(name: str) -> bool:
@@ -114,8 +184,14 @@ def load_roles(path: Path) -> list[Role]:
         privilege = spec.get("privilege", 0)
         if not isinstance(privilege, int) or isinstance(privilege, bool):
             raise ConfigError(f"role {name!r} 'privilege' must be an integer")
+        refresh = _validate_refresh(spec["refresh"], name=name) if "refresh" in spec else None
         roles[name] = Role(
-            name=name, headers=headers, cookies=cookies, owns=owns, privilege=privilege
+            name=name,
+            headers=headers,
+            cookies=cookies,
+            owns=owns,
+            privilege=privilege,
+            refresh=refresh,
         )
 
     if UNAUTH_ROLE not in roles:

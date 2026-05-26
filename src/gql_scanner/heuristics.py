@@ -97,6 +97,36 @@ def is_validation_error(exchange: Exchange) -> bool:
     return any(marker in text for text in _error_texts(exchange) for marker in _VALIDATION_MARKERS)
 
 
+# Markers that indicate an *expired/invalid session* (refresh-worthy), as opposed to
+# a legitimate "authenticated but forbidden" denial.
+_EXPIRY_MESSAGE_MARKERS = (
+    "expired",
+    "jwt expired",
+    "token expired",
+    "signature has expired",
+    "invalid token",
+    "token is invalid",
+    "not authenticated",
+    "login required",
+)
+
+
+def looks_like_session_expired(exchange: Exchange) -> bool:
+    """True when the response indicates an expired/invalid session.
+
+    Distinct from :func:`is_authz_denied`: a ``FORBIDDEN``/permission denial means the
+    identity is valid but lacks access (a refresh won't help), so it is excluded —
+    only ``401`` / ``UNAUTHENTICATED`` / explicit expiry messages qualify.
+    """
+    if exchange.status == 401:
+        return True
+    if "UNAUTHENTICATED" in _error_codes(exchange):
+        return True
+    return any(
+        marker in text for text in _error_texts(exchange) for marker in _EXPIRY_MESSAGE_MARKERS
+    )
+
+
 def classify_access(exchange: Exchange) -> Access:
     """Classify one operation probe into the access-matrix vocabulary.
 

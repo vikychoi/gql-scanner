@@ -11,6 +11,7 @@ from ..findings import Finding
 from ..reporter import Reporter
 from ..schema.model import SchemaModel
 from ..schema.reconstruct import ReconstructResult
+from ..session import SessionManager
 from ..transport import Transport
 
 
@@ -25,6 +26,7 @@ class CheckContext:
     introspection_enabled: bool
     reconstruction: ReconstructResult | None = None
     reporter: Reporter | None = None
+    session: SessionManager | None = None
     # Shared, mutable scratch space so checks that derive from the same expensive
     # probing (e.g. the injection families) compute it once. Frozen dataclass keeps
     # the binding fixed; the dict contents are intentionally mutable.
@@ -49,6 +51,10 @@ class CheckContext:
 
     def primary_creds(self) -> tuple[dict[str, str] | None, dict[str, str] | None]:
         role = self.primary_role()
+        # Prefer the session's current (possibly-refreshed) credentials.
+        if self.session is not None:
+            creds = self.session.creds(role.name)
+            return (creds.merged_headers(), creds.merged_cookies())
         return (role.headers or None, role.cookies or None)
 
 

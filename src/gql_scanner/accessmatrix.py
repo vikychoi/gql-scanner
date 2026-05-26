@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .config import UNAUTH_ROLE, Role, Settings
+from .config import UNAUTH_ROLE, Settings
 from .exchange import Exchange
 from .heuristics import Access, classify_access
 from .schema.model import Operation, SchemaModel
+from .session import SessionManager
 from .transport import Transport
 
 
@@ -58,28 +59,28 @@ def build_access_matrix(
     transport: Transport,
     settings: Settings,
     schema: SchemaModel | None,
+    session: SessionManager | None = None,
 ) -> AccessMatrix:
-    """Probe every operation as every role and classify each result."""
+    """Probe every operation as every role and classify each result.
+
+    When a :class:`SessionManager` is supplied, requests go through it so that an
+    expired credential is refreshed and the probe replayed — otherwise a lapsed
+    token would make every cell look ``DENIED`` and the target falsely "hardened".
+    """
     role_names = [r.name for r in settings.roles]
     matrix = AccessMatrix(role_names=role_names)
     if schema is None:
         return matrix
 
     matrix.operations = list(schema.operations)
-    roles_by_name: dict[str, Role] = {r.name: r for r in settings.roles}
+    session = session or SessionManager(settings.roles, settings.url)
 
     # Deterministic order: roles sorted, operations sorted.
     for op in matrix.sorted_operations:
         for role_name in sorted(role_names):
-            role = roles_by_name[role_name]
             if op.is_mutation and not settings.allow_mutations:
                 matrix.set(op, role_name, Cell(Access.SKIPPED, None))
                 continue
-            exchange = transport.graphql(
-                settings.url,
-                op.document(),
-                headers=role.headers or None,
-                cookies=role.cookies or None,
-            )
+            exchange = session.request(transport, role_name, op.document())
             matrix.set(op, role_name, Cell(classify_access(exchange), exchange))
     return matrix

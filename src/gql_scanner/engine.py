@@ -46,6 +46,7 @@ from .config import Settings
 from .findings import Finding
 from .reporter import Reporter
 from .schema.loader import resolve_schema
+from .session import SessionManager
 from .transport import Transport
 
 # Ordered registry. IDs are stable; order here is part of determinism.
@@ -115,9 +116,11 @@ def run_scan(
     intro_ex = resolution.introspection_exchange
     target_reachable = intro_ex is not None and intro_ex.ok
 
+    session = SessionManager(settings.roles, settings.url, reporter)
+
     n_ops = len(resolution.model.operations) if resolution.model else 0
     reporter.phase(f"building access matrix ({n_ops} operations × {len(settings.roles)} roles)")
-    matrix = build_access_matrix(transport, settings, resolution.model)
+    matrix = build_access_matrix(transport, settings, resolution.model, session)
 
     ctx = CheckContext(
         settings=settings,
@@ -127,6 +130,7 @@ def run_scan(
         introspection_enabled=resolution.introspection_enabled,
         reconstruction=resolution.reconstruction,
         reporter=reporter,
+        session=session,
     )
 
     reporter.phase("running checks")

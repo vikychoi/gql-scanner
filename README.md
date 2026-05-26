@@ -83,6 +83,42 @@ Optional per-role keys for ground-truth authorization testing:
 - `privilege` — integer (higher = more access); BFLA flags privilege inversion
   (a lower-privilege role allowed where a higher one is denied).
 
+### Keeping sessions alive (`refresh`)
+
+A long scan can outlive a token; an expired token would make every request look
+denied and the target falsely "hardened". A role may declare how to obtain fresh
+credentials. When a response indicates an **expired/invalid session** (`401`,
+`UNAUTHENTICATED`, or an "expired" message — *not* a plain permission denial), the
+scanner refreshes that role's credentials once and replays the request.
+
+```json
+"alice": {
+  "headers": { "Authorization": "Bearer {token}" },
+  "refresh": {
+    "script": "./examples/get_token.py",
+    "dependencies": ["requests"],
+    "inject": { "header": "Authorization", "template": "Bearer {token}" }
+  }
+}
+```
+
+Sources (set exactly one):
+
+- `script` — run as a subprocess. By default via **`uv run --with <dependencies>`**,
+  so the script's deps (e.g. `requests`) are guaranteed in an isolated env
+  regardless of how gql-scanner was installed (including `uvx`). Override the
+  launcher with `"runner"` (e.g. `"uv run"`, or a venv python path).
+- `command` — an arbitrary shell command (you control the interpreter/env), e.g.
+  `"uv run get_token.py"` or `"/path/.venv/bin/python get_token.py"`.
+- `entrypoint` — an in-process `"module:function"` callable (trusted code; its
+  deps must live in gql-scanner's own env, e.g. via `uvx --with`).
+
+The source receives context via env vars (`GQLSCAN_ROLE`, `GQLSCAN_URL`,
+`GQLSCAN_OLD_TOKEN`) and emits **either** a bare token (applied via `inject`)
+**or** a JSON object `{"headers": {...}, "cookies": {...}}` merged into the role's
+credentials. See `examples/get_token.py`. If a refresh fails, the scan continues
+safely (it won't retry that role again and warns on the console).
+
 ### Schema file (`--schema`)
 
 Required only when introspection is disabled. Accepts either an introspection JSON

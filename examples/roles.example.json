@@ -6,7 +6,12 @@
   "alice": {
     "headers": { "Authorization": "Bearer REPLACE_WITH_ALICE_TOKEN" },
     "owns": { "paste": ["1", "2"] },
-    "privilege": 1
+    "privilege": 1,
+    "refresh": {
+      "script": "./examples/get_token.py",
+      "dependencies": ["requests"],
+      "inject": { "header": "Authorization", "template": "Bearer {token}" }
+    }
   },
   "bob": {
     "cookies": { "session": "REPLACE_WITH_BOB_SESSION" },
