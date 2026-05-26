@@ -207,6 +207,7 @@ class Settings:
     url: str
     roles: list[Role]
     schema_path: Path | None = None
+    reconstruct_schema: bool = False  # recover schema from error oracles when introspection off
     findings_out: Path = Path("./gql-scanner-findings.csv")
     matrix_out: Path = Path("./gql-scanner-access-matrix.csv")
     json_out: Path | None = None

@@ -7,13 +7,22 @@ from gql_scanner.transport import Transport
 
 
 def test_reconstructs_fields_without_introspection(scan: ScanFn, hard: object) -> None:
-    # Hardened disables introspection AND field suggestions; reconstruction must
-    # still recover fields by membership testing (no --schema supplied).
-    result = scan(hard, no_schema=True)
+    # Hardened disables introspection AND field suggestions; with --reconstruct-schema
+    # the scanner must still recover fields by membership testing (no --schema supplied).
+    result = scan(hard, no_schema=True, reconstruct_schema=True)
     assert fired(result, "GQL-SCHEMA-RECONSTRUCTED")
     # The recovered model feeds the access matrix, so its operations appear there.
     names = {op.name for op in result.matrix.operations}
     assert {"me", "user", "users", "search"} <= names
+
+
+def test_reconstruction_off_by_default(scan: ScanFn, hard: object) -> None:
+    # Without the flag, a no-introspection / no-schema target yields no model: the
+    # reconstruction probes are never sent and schema-dependent checks are skipped.
+    result = scan(hard, no_schema=True)
+    assert not fired(result, "GQL-SCHEMA-RECONSTRUCTED")
+    assert result.matrix.operations == []
+    assert "GQL-BOLA-IDOR" in result.skipped_checks
 
 
 def test_reconstruct_module_directly() -> None:

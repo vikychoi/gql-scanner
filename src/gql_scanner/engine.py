@@ -117,16 +117,22 @@ def run_scan(
     reporter = reporter or Reporter(enabled=False)
     reporter.banner(settings.url)
 
+    session = SessionManager(settings.roles, settings.url, reporter)
+
     reporter.phase("resolving schema")
     resolution = resolve_schema(
-        transport, settings.url, settings.schema_path, settings.roles
+        transport,
+        settings.url,
+        settings.schema_path,
+        settings.roles,
+        session=session,
+        reconstruct_enabled=settings.reconstruct_schema,
     )
     reporter.info(resolution.note)
 
     intro_ex = resolution.introspection_exchange
     target_reachable = intro_ex is not None and intro_ex.ok
 
-    session = SessionManager(settings.roles, settings.url, reporter)
     # Stream partial output only for a reachable target; otherwise the CLI exits early
     # and we would leave behind empty / all-ERROR artifacts.
     active_sink = sink if target_reachable else None

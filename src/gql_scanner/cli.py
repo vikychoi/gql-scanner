@@ -51,6 +51,12 @@ def scan(
     schema: Path | None = typer.Option(
         None, help="SDL or introspection JSON (when introspection off)."
     ),
+    reconstruct_schema: bool = typer.Option(
+        False,
+        "--reconstruct-schema",
+        help="When introspection is disabled and no --schema is given, reconstruct the "
+        "schema from validation-error oracles (extra requests; off by default).",
+    ),
     findings_out: Path = typer.Option(
         Path("./gql-scanner-findings.csv"), help="Findings CSV output path."
     ),
@@ -104,6 +110,7 @@ def scan(
         url=url,
         roles=role_list,
         schema_path=schema,
+        reconstruct_schema=reconstruct_schema,
         findings_out=findings_out,
         matrix_out=matrix_out,
         json_out=json_out,
