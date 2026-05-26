@@ -177,12 +177,9 @@ class BrokenObjectLevelAuthz(Check):
                     for attacker in sorted(ctx.roles, key=lambda r: r.name):
                         if attacker.name == owner.name:
                             continue
-                        ex = ctx.transport.graphql(
-                            ctx.url,
-                            op.document_with_id(obj_id),
-                            headers=attacker.headers or None,
-                            cookies=attacker.cookies or None,
-                        )
+                        # Route through the session so a lapsed attacker token is
+                        # refreshed + replayed instead of masquerading as DENIED.
+                        ex = ctx.send(attacker.name, op.document_with_id(obj_id))
                         if classify_access(ex) is Access.ALLOWED:
                             out.append(
                                 Finding(

@@ -99,3 +99,25 @@ class Finding:
         corroborating signals and must not perturb deterministic row order.
         """
         return (-int(self.severity), self.check_id, self.evidence)
+
+
+def finalize_findings(findings: list[Finding], min_confidence: float = 0.0) -> list[Finding]:
+    """Dedupe, confidence-filter, fill ``operation``, and sort into the output order.
+
+    The single source of truth for findings-CSV row order, shared by the engine's
+    final result and the incremental writer so a partial (interrupted) CSV is ordered
+    and de-duplicated exactly like a completed one. Sort is (severity desc, check_id
+    asc, evidence asc) per §8.1; confidence never perturbs the order (§9).
+    """
+    seen: set[tuple[str, str]] = set()
+    deduped: list[Finding] = []
+    for f in findings:
+        if f.dedupe_key in seen:
+            continue
+        seen.add(f.dedupe_key)
+        deduped.append(f)
+    if min_confidence > 0.0:
+        deduped = [f for f in deduped if f.confidence >= min_confidence]
+    deduped = [f.with_derived_operation() for f in deduped]
+    deduped.sort(key=lambda f: f.sort_key)
+    return deduped

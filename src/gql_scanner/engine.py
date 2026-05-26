@@ -43,7 +43,8 @@ from .checks.injection_checks import (
 )
 from .checks.transport_checks import AuthBatch, CorsMisconfig, CsrfGet
 from .config import Settings
-from .findings import Finding
+from .findings import Finding, finalize_findings
+from .report.incremental import IncrementalWriter
 from .reporter import Reporter
 from .schema.loader import resolve_schema
 from .session import SessionManager
@@ -101,9 +102,18 @@ def _selected(check: Check, settings: Settings) -> bool:
 
 
 def run_scan(
-    settings: Settings, transport: Transport, reporter: Reporter | None = None
+    settings: Settings,
+    transport: Transport,
+    reporter: Reporter | None = None,
+    *,
+    sink: IncrementalWriter | None = None,
 ) -> ScanResult:
-    """Run the full deterministic scan and return findings + matrix."""
+    """Run the full deterministic scan and return findings + matrix.
+
+    When ``sink`` is supplied (the CLI does; tests do not), findings and the access
+    matrix are streamed to disk as they are produced, so an interrupted scan still
+    leaves valid partial CSVs. Streaming is skipped for an unreachable target.
+    """
     reporter = reporter or Reporter(enabled=False)
     reporter.banner(settings.url)
 
@@ -117,10 +127,19 @@ def run_scan(
     target_reachable = intro_ex is not None and intro_ex.ok
 
     session = SessionManager(settings.roles, settings.url, reporter)
+    # Stream partial output only for a reachable target; otherwise the CLI exits early
+    # and we would leave behind empty / all-ERROR artifacts.
+    active_sink = sink if target_reachable else None
+    if active_sink is not None:
+        active_sink.begin()
+
+    if target_reachable:
+        reporter.phase("baseline: validating role credentials")
+        session.prime(transport)
 
     n_ops = len(resolution.model.operations) if resolution.model else 0
     reporter.phase(f"building access matrix ({n_ops} operations × {len(settings.roles)} roles)")
-    matrix = build_access_matrix(transport, settings, resolution.model, session)
+    matrix = build_access_matrix(transport, settings, resolution.model, session, sink=active_sink)
 
     ctx = CheckContext(
         settings=settings,
@@ -152,13 +171,10 @@ def run_scan(
             reporter.hit(f.with_derived_operation())
         reporter.check_result(check.id, len(check_findings))
         findings.extend(check_findings)
+        if active_sink is not None:
+            active_sink.add_findings(check_findings)
 
-    findings = _dedupe(findings)
-    if settings.min_confidence > 0.0:
-        findings = [f for f in findings if f.confidence >= settings.min_confidence]
-    # Fill in the operation name (shown in the CSV instead of raw HTTP blobs).
-    findings = [f.with_derived_operation() for f in findings]
-    findings.sort(key=lambda f: f.sort_key)
+    findings = finalize_findings(findings, settings.min_confidence)
     reporter.summary(len(findings))
 
     return ScanResult(
@@ -169,14 +185,3 @@ def run_scan(
         target_reachable=target_reachable,
         skipped_checks=sorted(skipped),
     )
-
-
-def _dedupe(findings: list[Finding]) -> list[Finding]:
-    seen: set[tuple[str, str]] = set()
-    out: list[Finding] = []
-    for f in findings:
-        if f.dedupe_key in seen:
-            continue
-        seen.add(f.dedupe_key)
-        out.append(f)
-    return out

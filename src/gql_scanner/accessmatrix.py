@@ -8,6 +8,7 @@ deliverable (matrix CSV) and the substrate for the access-control checks.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .config import UNAUTH_ROLE, Settings
 from .exchange import Exchange
@@ -15,6 +16,9 @@ from .heuristics import Access, classify_access
 from .schema.model import Operation, SchemaModel
 from .session import SessionManager
 from .transport import Transport
+
+if TYPE_CHECKING:
+    from .report.incremental import IncrementalWriter
 
 
 @dataclass(frozen=True)
@@ -60,12 +64,18 @@ def build_access_matrix(
     settings: Settings,
     schema: SchemaModel | None,
     session: SessionManager | None = None,
+    *,
+    sink: IncrementalWriter | None = None,
 ) -> AccessMatrix:
     """Probe every operation as every role and classify each result.
 
     When a :class:`SessionManager` is supplied, requests go through it so that an
     expired credential is refreshed and the probe replayed — otherwise a lapsed
     token would make every cell look ``DENIED`` and the target falsely "hardened".
+
+    When a ``sink`` is supplied it is flushed after each operation's row completes, so
+    a scan interrupted mid-matrix still leaves a partial — but valid and correctly
+    ordered — matrix CSV on disk.
     """
     role_names = [r.name for r in settings.roles]
     matrix = AccessMatrix(role_names=role_names)
@@ -74,6 +84,8 @@ def build_access_matrix(
 
     matrix.operations = list(schema.operations)
     session = session or SessionManager(settings.roles, settings.url)
+    if sink is not None:
+        sink.update_matrix(matrix)  # header + all-NOT_TESTED rows up front
 
     # Deterministic order: roles sorted, operations sorted.
     for op in matrix.sorted_operations:
@@ -83,4 +95,6 @@ def build_access_matrix(
                 continue
             exchange = session.request(transport, role_name, op.document())
             matrix.set(op, role_name, Cell(classify_access(exchange), exchange))
+        if sink is not None:
+            sink.update_matrix(matrix)
     return matrix

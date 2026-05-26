@@ -8,7 +8,7 @@ import pytest
 
 from gql_scanner.config import ConfigError, RefreshSpec, Role, load_roles
 from gql_scanner.exchange import Exchange
-from gql_scanner.session import SessionManager, run_refresh
+from gql_scanner.session import _MAX_CONSECUTIVE_REFRESH, SessionManager, run_refresh
 
 
 def _exchange(body: dict, status: int = 200) -> Exchange:
@@ -85,6 +85,91 @@ def test_refresh_json_headers_and_cookies() -> None:
     )
     assert creds.headers == {"Authorization": "Bearer J"}
     assert creds.cookies == {"sid": "Z"}
+
+
+# --- baseline (prime) + refresh policy --------------------------------------
+
+
+def test_prime_refreshes_stale_token_proactively() -> None:
+    role = Role(
+        name="alice",
+        headers={"Authorization": "Bearer stale"},
+        refresh=RefreshSpec(command="printf fresh"),
+    )
+    sm = SessionManager([role], "http://x/graphql")
+    transport = _FakeTransport()
+    sm.prime(transport)
+    # The baseline `{ __typename }` probe saw the stale token, refreshed, and the role
+    # now carries fresh credentials before any real operation runs.
+    assert sm.creds("alice").headers["Authorization"] == "Bearer fresh"
+    assert transport.calls == ["Bearer stale", "Bearer fresh"]
+
+
+class _Notes:
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+
+    def phase(self, message: str) -> None:
+        self.lines.append(message)
+
+
+def test_prime_skips_unauth_and_warns_when_no_refresh() -> None:
+    roles = [
+        Role(name="alice", headers={"Authorization": "Bearer stale"}),  # no refresh spec
+        Role(name="unauthenticated"),  # no credentials at all
+    ]
+    notes = _Notes()
+    sm = SessionManager(roles, "http://x/graphql", reporter=notes)
+    transport = _FakeTransport()
+    sm.prime(transport)
+    # Unauth role is never probed (nothing to validate); alice is probed once and,
+    # lacking a refresh source, is left untouched but flagged for the user.
+    assert transport.calls == ["Bearer stale"]
+    assert sm.creds("alice").headers["Authorization"] == "Bearer stale"
+    assert any("no refresh is configured" in line for line in notes.lines)
+
+
+def test_refresh_stops_after_consecutive_non_productive_refreshes() -> None:
+    # Refresh always yields a token the server still rejects ("stale" != "fresh"), so
+    # every replay stays expired — the budget must stop us hammering the source.
+    role = Role(
+        name="alice",
+        headers={"Authorization": "Bearer stale"},
+        refresh=RefreshSpec(command="printf stale"),
+    )
+    sm = SessionManager([role], "http://x/graphql")
+    transport = _FakeTransport()
+    for _ in range(5):
+        assert sm.graphql(transport, "alice", "{ me { email } }") is _EXPIRED
+    # The first _MAX_CONSECUTIVE_REFRESH calls refresh (2 sends each: probe + replay);
+    # once exhausted, the remaining 2 calls send once and never refresh again.
+    assert len(transport.calls) == 2 * _MAX_CONSECUTIVE_REFRESH + 2
+    assert sm.refresh("alice") is False  # exhausted: refused without re-running source
+
+
+def test_refresh_budget_resets_after_a_productive_refresh(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # A source that hands out a still-rejected token first, then a good one.
+    counter = tmp_path / "n"
+    script = tmp_path / "refresh.sh"
+    script.write_text(
+        f'n=$(cat "{counter}" 2>/dev/null || echo 0)\n'
+        "n=$((n+1))\n"
+        f'echo "$n" > "{counter}"\n'
+        'if [ "$n" -le 1 ]; then printf nope; else printf fresh; fi\n'
+    )
+    role = Role(
+        name="alice",
+        headers={"Authorization": "Bearer stale"},
+        refresh=RefreshSpec(command=f"sh {script}"),
+    )
+    sm = SessionManager([role], "http://x/graphql")
+    transport = _FakeTransport()
+    # First call refreshes to a still-rejected token (non-productive, budget spent=1)...
+    assert sm.graphql(transport, "alice", "{ me { email } }") is _EXPIRED
+    # ...the second refreshes again (uncapped) to a good token and recovers.
+    ex = sm.graphql(transport, "alice", "{ me { email } }")
+    assert ex.graphql_data() == {"me": {"email": "a@b.c"}}
+    assert sm.creds("alice").headers["Authorization"] == "Bearer fresh"
 
 
 # --- config validation ------------------------------------------------------

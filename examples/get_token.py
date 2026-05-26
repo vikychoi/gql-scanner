@@ -35,7 +35,10 @@ def main() -> None:
     resp = requests.post(
         URL,
         json={
-            "query": "mutation($u:String!,$p:String!){ login(username:$u,password:$p){ accessToken } }",
+            "query": (
+                "mutation($u:String!,$p:String!)"
+                "{ login(username:$u,password:$p){ accessToken } }"
+            ),
             "variables": {"u": ROLE, "p": os.environ.get("GQLSCAN_PASSWORD", "changeme")},
         },
         timeout=15,

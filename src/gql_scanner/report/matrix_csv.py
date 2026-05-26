@@ -15,6 +15,7 @@ import io
 from pathlib import Path
 
 from ..accessmatrix import AccessMatrix
+from .atomic import write_text_atomic
 
 
 def render_matrix_csv(matrix: AccessMatrix) -> str:
@@ -31,4 +32,4 @@ def render_matrix_csv(matrix: AccessMatrix) -> str:
 
 
 def write_matrix_csv(matrix: AccessMatrix, path: Path) -> None:
-    path.write_text(render_matrix_csv(matrix), encoding="utf-8", newline="")
+    write_text_atomic(path, render_matrix_csv(matrix))

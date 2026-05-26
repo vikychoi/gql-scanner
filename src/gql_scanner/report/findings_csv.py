@@ -20,6 +20,7 @@ import io
 from pathlib import Path
 
 from ..findings import Finding
+from .atomic import write_text_atomic
 
 HEADER = [
     "check_id",
@@ -56,4 +57,4 @@ def render_findings_csv(findings: list[Finding]) -> str:
 
 
 def write_findings_csv(findings: list[Finding], path: Path) -> None:
-    path.write_text(render_findings_csv(findings), encoding="utf-8", newline="")
+    write_text_atomic(path, render_findings_csv(findings))

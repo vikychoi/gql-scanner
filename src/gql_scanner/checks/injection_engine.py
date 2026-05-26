@@ -78,13 +78,14 @@ class _Hit:
 class _Prober:
     def __init__(self, ctx: CheckContext) -> None:
         self.ctx = ctx
-        self.headers, self.cookies = ctx.primary_creds()
+        # Probe as the primary authenticated role, routed through the session so an
+        # expired token is refreshed + replayed mid-scan (the access matrix may have
+        # already refreshed it). Without a session, falls back to static creds.
+        self.role_name = ctx.primary_role().name
 
     def send(self, point: InjectionPoint, payload: str) -> Exchange:
         doc, variables = point.build(payload)
-        return self.ctx.transport.graphql(
-            self.ctx.url, doc, headers=self.headers, cookies=self.cookies, variables=variables
-        )
+        return self.ctx.send(self.role_name, doc, variables=variables)
 
 
 def _baseline_text(ex: Exchange) -> str:

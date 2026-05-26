@@ -16,6 +16,7 @@ from .config import ConfigError, Settings, default_roles, load_roles
 from .engine import run_scan
 from .findings import Severity
 from .report.findings_csv import write_findings_csv
+from .report.incremental import IncrementalWriter
 from .report.jsonl import write_jsonl
 from .report.matrix_csv import write_matrix_csv
 from .reporter import Reporter
@@ -120,8 +121,9 @@ def scan(
     )
 
     reporter = Reporter(console, verbose=verbose)
+    sink = IncrementalWriter(findings_out, matrix_out, min_confidence=min_confidence)
     with Transport(timeout=timeout, rps=rps, proxy=proxy, insecure=insecure) as transport:
-        result = run_scan(settings, transport, reporter)
+        result = run_scan(settings, transport, reporter, sink=sink)
 
     if not result.target_reachable:
         console.print(f"[red]target unreachable:[/red] {url}")

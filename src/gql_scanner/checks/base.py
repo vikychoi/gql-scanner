@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Any
 
 from ..accessmatrix import AccessMatrix
 from ..config import Role, Settings
+from ..exchange import Exchange
 from ..findings import Finding
 from ..reporter import Reporter
 from ..schema.model import SchemaModel
@@ -56,6 +58,39 @@ class CheckContext:
             creds = self.session.creds(role.name)
             return (creds.merged_headers(), creds.merged_cookies())
         return (role.headers or None, role.cookies or None)
+
+    def send(
+        self,
+        role_name: str,
+        document: str,
+        *,
+        variables: dict[str, Any] | None = None,
+        operation_name: str | None = None,
+    ) -> Exchange:
+        """Send a GraphQL op as ``role_name``, refresh-aware when a session exists.
+
+        Routes through the :class:`SessionManager` (so an expired token is refreshed
+        and the request replayed) when one is wired in; otherwise falls back to a
+        direct transport send with the role's static credentials — the path unit
+        tests take when they build a context without a session.
+        """
+        if self.session is not None:
+            return self.session.graphql(
+                self.transport,
+                role_name,
+                document,
+                variables=variables,
+                operation_name=operation_name,
+            )
+        role = next((r for r in self.settings.roles if r.name == role_name), None)
+        return self.transport.graphql(
+            self.url,
+            document,
+            headers=(role.headers or None) if role else None,
+            cookies=(role.cookies or None) if role else None,
+            variables=variables,
+            operation_name=operation_name,
+        )
 
 
 class Check(ABC):
