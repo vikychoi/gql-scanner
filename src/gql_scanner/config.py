@@ -208,6 +208,8 @@ class Settings:
     roles: list[Role]
     schema_path: Path | None = None
     reconstruct_schema: bool = False  # recover schema from error oracles when introspection off
+    access_control: bool = True  # run the access-control scan (matrix + authz checks)
+    vulnerability: bool = False  # run the vulnerability scan (config/DoS/batching/injection/...)
     findings_out: Path = Path("./gql-scanner-findings.csv")
     matrix_out: Path = Path("./gql-scanner-access-matrix.csv")
     json_out: Path | None = None

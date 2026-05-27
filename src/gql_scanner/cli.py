@@ -57,6 +57,17 @@ def scan(
         help="When introspection is disabled and no --schema is given, reconstruct the "
         "schema from validation-error oracles (extra requests; off by default).",
     ),
+    access_control: bool = typer.Option(
+        True,
+        "--access-control/--no-access-control",
+        help="Run the access-control scan: access matrix + authorization checks (default on).",
+    ),
+    vulnerability: bool = typer.Option(
+        False,
+        "--vulnerability/--no-vulnerability",
+        help="Run the vulnerability scan: config, DoS, batching, injection, transport "
+        "(default off).",
+    ),
     findings_out: Path = typer.Option(
         Path("./gql-scanner-findings.csv"), help="Findings CSV output path."
     ),
@@ -102,6 +113,13 @@ def scan(
         console.print(f"[red]config error:[/red] invalid --fail-on: {fail_on!r}")
         raise typer.Exit(2)
 
+    if not access_control and not vulnerability:
+        console.print(
+            "[red]config error:[/red] nothing to scan — enable --access-control "
+            "and/or --vulnerability"
+        )
+        raise typer.Exit(2)
+
     if schema is not None and not schema.exists():
         console.print(f"[red]config error:[/red] schema file not found: {schema}")
         raise typer.Exit(2)
@@ -111,6 +129,8 @@ def scan(
         roles=role_list,
         schema_path=schema,
         reconstruct_schema=reconstruct_schema,
+        access_control=access_control,
+        vulnerability=vulnerability,
         findings_out=findings_out,
         matrix_out=matrix_out,
         json_out=json_out,

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from .config import UNAUTH_ROLE, Settings
 from .exchange import Exchange
-from .heuristics import Access, classify_access
+from .heuristics import Access, classify_access_control
 from .schema.model import Operation, SchemaModel
 from .session import SessionManager
 from .transport import Transport
@@ -94,7 +94,7 @@ def build_access_matrix(
                 matrix.set(op, role_name, Cell(Access.SKIPPED, None))
                 continue
             exchange = session.request(transport, role_name, op.document())
-            matrix.set(op, role_name, Cell(classify_access(exchange), exchange))
+            matrix.set(op, role_name, Cell(classify_access_control(exchange), exchange))
         if sink is not None:
             sink.update_matrix(matrix)
     return matrix

@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from ..config import UNAUTH_ROLE
 from ..findings import Finding, Severity
-from ..heuristics import Access, classify_access
+from ..heuristics import Access, classify_access_control
 from ..schema.model import Operation
-from .base import Check, CheckContext
+from .base import CATEGORY_ACCESS_CONTROL, Check, CheckContext
 
 # Benign placeholder identifier used for object-by-ID access probes.
 _PROBE_ID = "1"
@@ -32,6 +32,7 @@ class UnauthAccess(Check):
     id = "GQL-UNAUTH-ACCESS"
     title = "Operation reachable without authentication"
     requires_schema = True
+    category = CATEGORY_ACCESS_CONTROL
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         findings: list[Finding] = []
@@ -61,6 +62,7 @@ class BrokenFunctionLevelAuthz(Check):
     id = "GQL-BFLA"
     title = "Broken function-level authorization"
     requires_schema = True
+    category = CATEGORY_ACCESS_CONTROL
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         findings: list[Finding] = []
@@ -153,6 +155,7 @@ class BrokenObjectLevelAuthz(Check):
     id = "GQL-BOLA-IDOR"
     title = "Broken object-level authorization (IDOR)"
     requires_schema = True
+    category = CATEGORY_ACCESS_CONTROL
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         if ctx.schema is None:
@@ -180,7 +183,7 @@ class BrokenObjectLevelAuthz(Check):
                         # Route through the session so a lapsed attacker token is
                         # refreshed + replayed instead of masquerading as DENIED.
                         ex = ctx.send(attacker.name, op.document_with_id(obj_id))
-                        if classify_access(ex) is Access.ALLOWED:
+                        if classify_access_control(ex) is Access.ALLOWED:
                             out.append(
                                 Finding(
                                     check_id=self.id,
@@ -220,7 +223,7 @@ class BrokenObjectLevelAuthz(Check):
                 headers=(unauth.headers or None) if unauth else None,
                 cookies=(unauth.cookies or None) if unauth else None,
             )
-            if classify_access(ex) is Access.ALLOWED:
+            if classify_access_control(ex) is Access.ALLOWED:
                 out.append(
                     Finding(
                         check_id=self.id,
@@ -246,6 +249,7 @@ class NodeFieldAccess(Check):
     id = "GQL-NODE-FIELD-ACCESS"
     title = "Global node/nodes field present"
     requires_schema = True
+    category = CATEGORY_ACCESS_CONTROL
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         if ctx.schema is None or not ctx.schema.has_node_field:
@@ -254,7 +258,7 @@ class NodeFieldAccess(Check):
         if node_op is None:
             return []
         ex = ctx.transport.graphql(ctx.url, node_op.document_with_id(_PROBE_ID))
-        reachable = classify_access(ex) is Access.ALLOWED
+        reachable = classify_access_control(ex) is Access.ALLOWED
         desc = f"A global '{node_op.name}' field is present" + (
             " and resolves objects directly by opaque ID." if reachable else "."
         )
@@ -276,6 +280,7 @@ class EdgeNodeAuthz(Check):
     id = "GQL-EDGE-NODE-AUTHZ"
     title = "Edge/node authorization inconsistency"
     requires_schema = True
+    category = CATEGORY_ACCESS_CONTROL
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         if ctx.schema is None:
@@ -287,7 +292,7 @@ class EdgeNodeAuthz(Check):
                 continue
             scalar_cell = ctx.matrix.get(op, UNAUTH_ROLE)
             edges_ex = ctx.transport.graphql(ctx.url, edges_doc)
-            edges_access = classify_access(edges_ex)
+            edges_access = classify_access_control(edges_ex)
             scalar_access = scalar_cell.access
             if {scalar_access, edges_access} == {Access.ALLOWED, Access.DENIED}:
                 findings.append(

@@ -155,6 +155,23 @@ def classify_access(exchange: Exchange) -> Access:
     return Access.ERROR
 
 
+def classify_access_control(exchange: Exchange) -> Access:
+    """Classify a probe for the *access-control* scan: was the role blocked by authz?
+
+    The only question that matters is whether authorization denied the role. A clean
+    authz denial (401/403, ``UNAUTHENTICATED``/``FORBIDDEN``, permission messages) is
+    ``DENIED``; a transport failure with no response at all stays ``ERROR``; everything
+    else — data, a validation/execution error from an input the scanner could not know,
+    or a 5xx — is treated as ``ALLOWED``. Erring toward ALLOWED means an imperfect probe
+    cannot mask access the role actually has (fail-open detection).
+    """
+    if exchange.status == 0 or not exchange.ok:
+        return Access.ERROR
+    if is_authz_denied(exchange):
+        return Access.DENIED
+    return Access.ALLOWED
+
+
 # --- Configuration / error-handling signals (§7.1) ---------------------------
 
 _STACK_TRACE_MARKERS = (

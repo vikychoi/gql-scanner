@@ -74,6 +74,9 @@ def scan(tmp_path: Path, roles_path: Path) -> Iterator[ScanFn]:
         no_schema = bool(overrides.pop("no_schema", False))
         schema_path = overrides.pop("schema_path", None)
         sink = overrides.pop("sink", None)  # optional IncrementalWriter for streaming tests
+        # Tests exercise the full scanner by default; mode-specific tests override these.
+        overrides.setdefault("access_control", True)
+        overrides.setdefault("vulnerability", True)
         if schema_path is None and not no_schema and not profile_module.PROFILE.introspection:  # type: ignore[attr-defined]
             schema_path = _schema_file(tmp_path, profile_module.SDL)  # type: ignore[attr-defined]
 

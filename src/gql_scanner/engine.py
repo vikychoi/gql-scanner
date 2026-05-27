@@ -16,7 +16,7 @@ from .checks.access_checks import (
     NodeFieldAccess,
     UnauthAccess,
 )
-from .checks.base import Check, CheckContext
+from .checks.base import CATEGORY_ACCESS_CONTROL, Check, CheckContext
 from .checks.batching_checks import AliasBatching, ArrayBatching, BatchRateLimit
 from .checks.config_checks import (
     ExcessiveErrors,
@@ -101,6 +101,13 @@ def _selected(check: Check, settings: Settings) -> bool:
     return True
 
 
+def _in_scope(check: Check, settings: Settings) -> bool:
+    """True if the check's category is enabled by the selected scan(s)."""
+    if check.category == CATEGORY_ACCESS_CONTROL:
+        return settings.access_control
+    return settings.vulnerability
+
+
 def run_scan(
     settings: Settings,
     transport: Transport,
@@ -143,9 +150,19 @@ def run_scan(
         reporter.phase("baseline: validating role credentials")
         session.prime(transport)
 
-    n_ops = len(resolution.model.operations) if resolution.model else 0
-    reporter.phase(f"building access matrix ({n_ops} operations × {len(settings.roles)} roles)")
-    matrix = build_access_matrix(transport, settings, resolution.model, session, sink=active_sink)
+    if settings.access_control:
+        n_ops = len(resolution.model.operations) if resolution.model else 0
+        reporter.phase(
+            f"building access matrix ({n_ops} operations × {len(settings.roles)} roles)"
+        )
+        matrix = build_access_matrix(
+            transport, settings, resolution.model, session, sink=active_sink
+        )
+    else:
+        # Vulnerability-only scan: no authorization probing, so the matrix stays empty.
+        matrix = AccessMatrix(role_names=[r.name for r in settings.roles])
+        if active_sink is not None:
+            active_sink.update_matrix(matrix)
 
     ctx = CheckContext(
         settings=settings,
@@ -163,6 +180,9 @@ def run_scan(
     skipped: list[str] = []
     for check in CHECK_REGISTRY:
         if not _selected(check, settings):
+            skipped.append(check.id)
+            continue
+        if not _in_scope(check, settings):
             skipped.append(check.id)
             continue
         if check.requires_schema and resolution.model is None:

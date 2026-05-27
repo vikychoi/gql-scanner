@@ -93,6 +93,12 @@ class CheckContext:
         )
 
 
+# Scan categories — a run can enable the access-control scan, the vulnerability scan,
+# or both. Each check declares which one it belongs to.
+CATEGORY_ACCESS_CONTROL = "access-control"
+CATEGORY_VULNERABILITY = "vulnerability"
+
+
 class Check(ABC):
     """A single, idempotent, read-only-by-default control from the OWASP sheet."""
 
@@ -100,6 +106,7 @@ class Check(ABC):
     title: str
     requires_schema: bool = False
     is_mutation_probe: bool = False  # gated by --allow-mutations when True
+    category: str = CATEGORY_VULNERABILITY  # access-control checks override this
 
     @abstractmethod
     def run(self, ctx: CheckContext) -> list[Finding]:
